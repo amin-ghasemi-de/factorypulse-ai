@@ -126,4 +126,3 @@ for window in window_sizes:
         f"{eligible_segments} eligible segments, "
         f"{eligible_rows} rows in eligible segments"
     )
-    
