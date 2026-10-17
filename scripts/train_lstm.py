@@ -1,6 +1,6 @@
 
 from pathlib import Path
-
+from torch.utils.tensorboard import SummaryWriter
 import joblib
 import torch
 from torch import nn
@@ -40,8 +40,10 @@ def main():
     # 1. Prepare data
     (
         train_clean,
+        val_clean,
         test_df,
         X_train_scaled,
+        X_val_scaled,
         X_test_scaled,
         scaler,
     ) = prepare_ml_data()
@@ -56,6 +58,14 @@ def main():
 
     print("\nValid training sequences:", len(train_dataset))
 
+    val_dataset = CompressorSequenceDataset(
+        data=X_val_scaled,
+        segment_ids=val_clean["segment_id"].to_numpy(),
+        source_indices=val_clean.index.to_numpy(),
+        sequence_length=SEQUENCE_LENGTH,
+    )
+
+    print("Valid validation sequences:", len(val_dataset))
     # 3. Select baseline training subset
     generator = torch.Generator().manual_seed(RANDOM_SEED)
 
@@ -90,6 +100,31 @@ def main():
         lr=LEARNING_RATE,
     )
 
+    import numpy as np
+
+    val_indices = np.linspace(
+        0,
+        len(val_dataset) - 1,
+        min(512, len(val_dataset)),
+        dtype=np.int64,
+    ).tolist()
+
+    validation_subset = Subset(
+        val_dataset,
+        val_indices,
+    )
+
+    validation_loader = DataLoader(
+        validation_subset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=0,
+    )
+
+    LOG_DIR = PROJECT_ROOT / "runs" / "lstm_time_validation"
+
+    writer = SummaryWriter(log_dir=LOG_DIR)
+    
     # 5. Train model
     for epoch in range(NUM_EPOCHS):
 
@@ -111,10 +146,48 @@ def main():
 
         average_loss = total_loss / len(training_loader)
 
+        model.eval()
+
+        validation_loss = 0.0
+
+        with torch.inference_mode():
+
+            for batch in validation_loader:
+                reconstruction = model(batch)
+
+                loss = criterion(
+                    reconstruction,
+                    batch
+                )
+
+                validation_loss += (
+                        loss.item() * batch.size(0)
+                )
+
+        validation_loss /= len(validation_subset)
+
+        writer.add_scalar(
+            "Loss/Validation",
+            validation_loss,
+            epoch + 1
+        )
+        print(
+            f"Epoch {epoch + 1}/{NUM_EPOCHS} "
+            f"- Validation Loss: {validation_loss:.6f}"
+        )
+
+        writer.add_scalar(
+            "Loss/Training",
+            average_loss,
+            epoch + 1
+        )
         print(
             f"Epoch {epoch + 1}/{NUM_EPOCHS} "
             f"- Training Loss: {average_loss:.6f}"
         )
+    writer.close()
+
+    print("TensorBoard logs saved to:", LOG_DIR)
 
     # 6. Save model and scaler
     MODEL_DIR.mkdir(parents=True, exist_ok=True)

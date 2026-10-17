@@ -48,45 +48,77 @@ def prepare_ml_data():
         raise ValueError("Sensor data contains missing values.")
 
     # Chronological split
-    split_index = int(len(df) * 0.8)
+    train_end = int(len(df) * 0.70)
+    validation_end = int(len(df) * 0.80)
 
-    train_df = df.iloc[:split_index].copy()
-    test_df = df.iloc[split_index:].copy()
+    train_df = df.iloc[:train_end].copy()
+
+    val_df = df.iloc[
+        train_end:validation_end
+    ].copy()
+
+    test_df = df.iloc[validation_end:].copy()
+
+    print("\nTrain shape:", train_df.shape)
+    print("Validation shape:", val_df.shape)
+    print("Test shape:", test_df.shape)
+
+    print("Train period:",
+          train_df["timestamp"].min(),
+          "to",
+          train_df["timestamp"].max())
+
+    print("Validation period:",
+          val_df["timestamp"].min(),
+          "to",
+          val_df["timestamp"].max())
 
     print("\nTrain shape:", train_df.shape)
     print("Test shape:", test_df.shape)
 
     # Exclude known failure periods from training
-    failure_mask = pd.Series(False, index=train_df.index)
+    def exclude_failure_periods(data):
 
-    for start, end in FAILURE_PERIODS:
-        failure_mask |= train_df["timestamp"].between(
-            pd.Timestamp(start),
-            pd.Timestamp(end)
+        failure_mask = pd.Series(
+            False,
+            index=data.index
         )
 
-    train_clean = train_df.loc[~failure_mask].copy()
+        for start, end in FAILURE_PERIODS:
+            failure_mask |= data["timestamp"].between(
+                pd.Timestamp(start),
+                pd.Timestamp(end)
+            )
 
-    print("\nExcluded failure rows:", failure_mask.sum())
-    print("Clean Train rows:", len(train_clean))
+        return data.loc[~failure_mask].copy()
+
+    train_clean = exclude_failure_periods(train_df)
+    val_clean = exclude_failure_periods(val_df)
+
+    print("\nClean Train rows:", len(train_clean))
+    print("Clean Validation rows:", len(val_clean))
 
     # Select sensor features
     X_train = train_clean[SENSORS]
+    X_val = val_clean[SENSORS]
     X_test = test_df[SENSORS]
 
-    # Fit scaler only on clean training data
     scaler = StandardScaler()
 
     X_train_scaled = scaler.fit_transform(X_train)
+    X_val_scaled = scaler.transform(X_val)
     X_test_scaled = scaler.transform(X_test)
 
     print("\nScaled Train:", X_train_scaled.shape)
+    print("Scaled Validation:", X_val_scaled.shape)
     print("Scaled Test:", X_test_scaled.shape)
 
     return (
         train_clean,
+        val_clean,
         test_df,
         X_train_scaled,
+        X_val_scaled,
         X_test_scaled,
         scaler,
     )
